@@ -1,0 +1,74 @@
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import numpy as np
+
+def load_data(filepath):
+    return pd.read_excel(filepath)
+
+def prepare_data(data, sku_id):
+    product_data = data[data['sku_id'] == sku_id].copy()
+    if product_data.empty:
+        print("No data found for SKU ID:", sku_id)
+        return None
+    # Update the format string to match the dataset format
+    product_data.loc[:, 'week_of_year'] = pd.to_datetime(product_data['week'], format='%y/%m/%d').dt.isocalendar().week
+    return product_data.dropna()
+
+def train_forecasting_model(data):
+    if data is None:
+        return None, None, None
+    X = data[['total_price', 'base_price', 'is_featured_sku', 'is_display_sku', 'week_of_year']]
+    y = data['units_sold']
+    if len(y) < 10:
+        print("Not enough data points to perform a train-test split.")
+        return None, None, None
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Parameter grid for Random Forest
+    param_grid = {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [None, 10, 20, 30],
+        'min_samples_split': [2, 5, 10]
+    }
+    model = RandomForestRegressor(random_state=42)
+    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=5, scoring='neg_mean_squared_error')
+    grid_search.fit(X_train, y_train)
+
+    best_model = grid_search.best_estimator_
+
+    # Cross-validation scores
+    cv_scores = cross_val_score(best_model, X_train, y_train, cv=5, scoring='neg_mean_squared_error')
+    print("CV RMSE:", np.mean(np.sqrt(-cv_scores)))
+
+    return best_model, X_test, y_test
+
+def predict_demand(model, X_test):
+    if model and X_test is not None:
+        return model.predict(X_test)
+    return []
+
+def evaluate_model(model, X_test, y_test):
+    predictions = model.predict(X_test)
+    mae = mean_absolute_error(y_test, predictions)
+    rmse = np.sqrt(mean_squared_error(y_test, predictions))
+    print(f"MAE: {mae}, RMSE: {rmse}")
+    return mae, rmse
+
+def main():
+    filepath = 'dataset_forecasting.xlsx'
+    sku_id = 245387  # Specify the SKU ID of the product to test
+    data = load_data(filepath)
+    prepared_data = prepare_data(data, sku_id)
+    model, X_test, y_test = train_forecasting_model(prepared_data)
+    if model:
+        predictions = predict_demand(model, X_test)
+        evaluate_model(model, X_test, y_test)
+        if len(predictions) > 0:
+            print("Predicted sales for the next 30 days:", predictions[:30])
+        else:
+            print("No predictions to display.")
+
+if __name__ == '__main__':
+    main()
